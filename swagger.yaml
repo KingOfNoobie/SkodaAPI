@@ -1,0 +1,1843 @@
+openapi: 3.0.3
+info:
+  title: MyŠkoda Mobile API
+  description: |
+    Unofficial OpenAPI specification reverse-engineered from the MyŠkoda mobile app
+    (`RestClient.swift`). This documents the **Skoda Connect REST API** used by third-party clients.
+
+    **Base path:** all endpoints below are relative to `https://mysmob.api.connect.skoda-auto.cz/api`
+
+    **Authentication:** OAuth2 / IDK login via VW Identity (`identity.vwgroup.io`), then Bearer token on API calls.
+    Refresh via `POST /v1/authentication/refresh-token`.
+
+    **Vehicle commands:** many write operations also flow through **MQTT** (honk, lock, charging updates, etc.)
+    in parallel to or instead of REST — see `MySkodaConstants.mqttTopics`.
+
+    > Unofficial documentation — not affiliated with Škoda Auto or Volkswagen Group.
+  version: 1.0.0
+  contact:
+    name: Skoda unofficial client
+
+servers:
+  - url: https://mysmob.api.connect.skoda-auto.cz/api
+    description: MyŠkoda Connect API (production)
+  - url: https://identity.vwgroup.io
+    description: VW Identity / OAuth (login only)
+
+tags:
+  - name: Authentication
+  - name: Users
+  - name: Garage
+  - name: Vehicle Status
+  - name: Charging
+  - name: Climate
+  - name: Vehicle Access
+  - name: Vehicle Wakeup
+  - name: Maps
+  - name: Vehicle Automation
+  - name: Maintenance
+  - name: Trip Statistics
+  - name: Vehicle Information
+  - name: Health
+  - name: Connection
+  - name: Loyalty
+  - name: Consents
+  - name: Partner Offers
+  - name: Notifications
+  - name: S-PIN
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/authentication/refresh-token:
+    post:
+      tags: [Authentication]
+      summary: Refresh access token
+      security: []
+      parameters:
+        - name: tokenType
+          in: query
+          schema:
+            type: string
+            default: CONNECT
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  description: Refresh token
+      responses:
+        '200':
+          description: New session tokens
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IDKSession'
+
+  /v1/users:
+    get:
+      tags: [Users]
+      summary: Get current user profile
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+
+  /v1/users/preferences:
+    get:
+      tags: [Users]
+      summary: Get user preferences
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPreferences'
+    put:
+      tags: [Users]
+      summary: Update user preferences
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserPreferencesUpdate'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPreferences'
+
+  /v2/garage:
+    get:
+      tags: [Garage]
+      summary: List vehicles in garage
+      parameters:
+        - $ref: '#/components/parameters/connectivityGenerations'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GarageResponse'
+
+  /v2/garage/vehicles/{vin}:
+    get:
+      tags: [Garage]
+      summary: Get vehicle details
+      parameters:
+        - $ref: '#/components/parameters/vin'
+        - $ref: '#/components/parameters/connectivityGenerations'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VehicleInfo'
+    patch:
+      tags: [Garage]
+      summary: Update vehicle name
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+      responses:
+        '204':
+          description: Updated
+
+  /v2/garage/vehicles/{vin}/users/guests:
+    get:
+      tags: [Garage]
+      summary: List guest users
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GuestUsersResponse'
+    post:
+      tags: [Garage]
+      summary: Invite guest user
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '204':
+          description: Invitation sent
+
+  /v2/garage/vehicles/{vin}/users/guests/{userId}:
+    delete:
+      tags: [Garage]
+      summary: Remove guest user
+      parameters:
+        - $ref: '#/components/parameters/vin'
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Removed
+
+  /v2/vehicle-status/{vin}:
+    get:
+      tags: [Vehicle Status]
+      summary: Get vehicle status (doors, windows, lights, etc.)
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VehicleStatus'
+
+  /v2/vehicle-status/{vin}/driving-range:
+    get:
+      tags: [Vehicle Status]
+      summary: Get driving range
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DrivingRange'
+
+  /v2/vehicle-status/{vin}/driving-score:
+    get:
+      tags: [Vehicle Status]
+      summary: Get driving score
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DrivingScore'
+
+  /v2/connection-status/{vin}/readiness:
+    get:
+      tags: [Connection]
+      summary: Vehicle connection / readiness status
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionStatus'
+
+  /v1/charging/{vin}:
+    get:
+      tags: [Charging]
+      summary: Get charging status
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChargingInfo'
+
+  /v1/charging/{vin}/start:
+    post:
+      tags: [Charging]
+      summary: Start charging
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      responses:
+        '204':
+          description: Command accepted
+
+  /v1/charging/{vin}/stop:
+    post:
+      tags: [Charging]
+      summary: Stop charging
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      responses:
+        '204':
+          description: Command accepted
+
+  /v1/charging/{vin}/profiles:
+    get:
+      tags: [Charging]
+      summary: Get charging profiles
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChargingProfilesResponse'
+
+  /v1/charging/{vin}/profiles/{profileId}:
+    put:
+      tags: [Charging]
+      summary: Update charging profile
+      parameters:
+        - $ref: '#/components/parameters/vin'
+        - name: profileId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChargingProfileUpdate'
+      responses:
+        '204':
+          description: Updated
+
+  /v1/charging/{vin}/history:
+    get:
+      tags: [Charging]
+      summary: Get charging history
+      parameters:
+        - $ref: '#/components/parameters/vin'
+        - name: userTimezone
+          in: query
+          schema:
+            type: string
+            example: Europe/Amsterdam
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChargingHistory'
+
+  /v1/charging/{vin}/set-charge-limit:
+    put:
+      tags: [Charging]
+      summary: Set charge limit (target SOC %)
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                targetSOCInPercent:
+                  type: integer
+                  minimum: 0
+                  maximum: 100
+      responses:
+        '204':
+          description: Updated
+
+  /v1/charging/{vin}/set-charge-mode:
+    post:
+      tags: [Charging]
+      summary: Set charge mode
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                chargeMode:
+                  type: string
+                  enum: [MANUAL, TIMER, OFF]
+      responses:
+        '204':
+          description: Updated
+
+  /v1/charging/{vin}/set-care-mode:
+    put:
+      tags: [Charging]
+      summary: Enable/disable charging care mode
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                chargingCareMode:
+                  type: string
+                  enum: [ACTIVATED, DEACTIVATED]
+      responses:
+        '204':
+          description: Updated
+
+  /v1/charging/{vin}/set-auto-unlock-plug:
+    put:
+      tags: [Charging]
+      summary: Set auto-unlock plug behaviour
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                autoUnlockPlug:
+                  type: string
+                  enum: [PERMANENT, OFF]
+      responses:
+        '204':
+          description: Updated
+
+  /v1/charging/{vin}/set-charging-current:
+    put:
+      tags: [Charging]
+      summary: Set charging current
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                chargingCurrent:
+                  type: string
+                  enum: [REDUCED, MAXIMUM]
+      responses:
+        '204':
+          description: Updated
+
+  /v2/air-conditioning/{vin}:
+    get:
+      tags: [Climate]
+      summary: Get air conditioning status
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AirConditioningInfo'
+
+  /v2/air-conditioning/{vin}/start:
+    post:
+      tags: [Climate]
+      summary: Start A/C
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartAirConditioningRequest'
+      responses:
+        '204':
+          description: Started
+
+  /v2/air-conditioning/{vin}/stop:
+    post:
+      tags: [Climate]
+      summary: Stop A/C
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      responses:
+        '204':
+          description: Stopped
+
+  /v2/air-conditioning/{vin}/auxiliary-heating:
+    get:
+      tags: [Climate]
+      summary: Get auxiliary heating status
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuxiliaryHeatingInfo'
+
+  /v2/air-conditioning/{vin}/auxiliary-heating/start:
+    post:
+      tags: [Climate]
+      summary: Start auxiliary heating
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                spin:
+                  type: string
+      responses:
+        '204':
+          description: Started
+
+  /v2/air-conditioning/{vin}/auxiliary-heating/stop:
+    post:
+      tags: [Climate]
+      summary: Stop auxiliary heating
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      responses:
+        '204':
+          description: Stopped
+
+  /v2/air-conditioning/{vin}/window-heating/start:
+    post:
+      tags: [Climate]
+      summary: Start window heating
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      responses:
+        '204':
+          description: Started
+
+  /v2/air-conditioning/{vin}/window-heating/stop:
+    post:
+      tags: [Climate]
+      summary: Stop window heating
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      responses:
+        '204':
+          description: Stopped
+
+  /v2/air-conditioning/{vin}/active-ventilation:
+    get:
+      tags: [Climate]
+      summary: Get active ventilation status
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActiveVentilationInfo'
+
+  /v2/air-conditioning/{vin}/active-ventilation/start:
+    post:
+      tags: [Climate]
+      summary: Start active ventilation
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      responses:
+        '204':
+          description: Started
+
+  /v2/air-conditioning/{vin}/active-ventilation/stop:
+    post:
+      tags: [Climate]
+      summary: Stop active ventilation
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      responses:
+        '204':
+          description: Stopped
+
+  /v2/air-conditioning/{vin}/settings/target-temperature:
+    post:
+      tags: [Climate]
+      summary: Set target temperature
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                targetTemperature:
+                  $ref: '#/components/schemas/Temperature'
+      responses:
+        '204':
+          description: Updated
+
+  /v2/air-conditioning/{vin}/settings/ac-at-unlock:
+    post:
+      tags: [Climate]
+      summary: A/C at unlock setting
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                airConditioningAtUnlockEnabled:
+                  type: boolean
+      responses:
+        '204':
+          description: Updated
+
+  /v2/air-conditioning/{vin}/settings/ac-without-external-power:
+    post:
+      tags: [Climate]
+      summary: A/C without external power setting
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                airConditioningWithoutExternalPowerEnabled:
+                  type: boolean
+      responses:
+        '204':
+          description: Updated
+
+  /v2/air-conditioning/{vin}/settings/seats-heating:
+    post:
+      tags: [Climate]
+      summary: Seat heating settings
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                frontLeft:
+                  type: boolean
+                frontRight:
+                  type: boolean
+      responses:
+        '204':
+          description: Updated
+
+  /v2/air-conditioning/{vin}/timers:
+    post:
+      tags: [Climate]
+      summary: Update A/C timers
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                timers:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/ACTimer'
+      responses:
+        '204':
+          description: Updated
+
+  /v1/vehicle-access/{vin}/lock:
+    post:
+      tags: [Vehicle Access]
+      summary: Lock vehicle
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpinRequest'
+      responses:
+        '204':
+          description: Locked
+
+  /v1/vehicle-access/{vin}/unlock:
+    post:
+      tags: [Vehicle Access]
+      summary: Unlock vehicle
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpinRequest'
+      responses:
+        '204':
+          description: Unlocked
+
+  /v1/vehicle-access/{vin}/honk-and-flash:
+    post:
+      tags: [Vehicle Access]
+      summary: Honk and flash / flash only
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HonkAndFlashRequest'
+      responses:
+        '204':
+          description: Command sent
+
+  /v1/vehicle-wakeup/{vin}:
+    post:
+      tags: [Vehicle Wakeup]
+      summary: Wake up vehicle
+      parameters:
+        - $ref: '#/components/parameters/vin'
+        - name: applyRequestLimiter
+          in: query
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '204':
+          description: Wakeup requested
+
+  /v1/spin/verify:
+    post:
+      tags: [S-PIN]
+      summary: Verify S-PIN
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                currentSpin:
+                  type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpinVerification'
+
+  /v3/maps/positions/vehicles/{vin}/parking:
+    get:
+      tags: [Maps]
+      summary: Get parking position
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParkingPosition'
+
+  /v1/maps/positions:
+    get:
+      tags: [Maps]
+      summary: Get vehicle positions
+      parameters:
+        - name: vin
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PositionsResponse'
+
+  /v3/maps/places/predictions:
+    get:
+      tags: [Maps]
+      summary: Place search autocomplete
+      parameters:
+        - name: query
+          in: query
+          schema:
+            type: string
+        - name: latitude
+          in: query
+          schema:
+            type: number
+            format: double
+        - name: longitude
+          in: query
+          schema:
+            type: number
+            format: double
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlacePredictionsResponse'
+
+  /v3/maps/places/{placeId}:
+    get:
+      tags: [Maps]
+      summary: Get place details
+      parameters:
+        - name: placeId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [LOCATION, CHARGING_STATION, GAS_STATION]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MapPlaceDetailResponse'
+
+  /v3/maps/places:
+    get:
+      tags: [Maps]
+      summary: Reverse geocode / resolve place at coordinate
+      parameters:
+        - name: latitude
+          in: query
+          required: true
+          schema:
+            type: number
+        - name: longitude
+          in: query
+          required: true
+          schema:
+            type: number
+        - name: searchRadius
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MapPlacesLookupResponse'
+
+  /v3/maps/nearby-places:
+    post:
+      tags: [Maps]
+      summary: Search nearby charging or gas stations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NearbyPlacesRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NearbyPlacesResponse'
+
+  /v2/maps/charging-stations/{placeId}/prices:
+    get:
+      tags: [Maps]
+      summary: Get charging station prices
+      parameters:
+        - name: placeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Raw pricing JSON (partner-specific)
+
+  /v3/maps/route:
+    post:
+      tags: [Maps]
+      summary: Plan route to destination(s)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlanRouteRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlannedRouteResponse'
+
+  /v3/maps/route-url:
+    post:
+      tags: [Maps]
+      summary: Import route from URL (Google Maps, etc.)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vin, url]
+              properties:
+                vin:
+                  type: string
+                url:
+                  type: string
+                  format: uri
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlannedRouteResponse'
+
+  /v3/maps/{vin}/route:
+    put:
+      tags: [Maps]
+      summary: Send planned route to vehicle
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                routeId:
+                  type: string
+      responses:
+        '204':
+          description: Route sent
+
+  /v3/maps/places/favourites:
+    get:
+      tags: [Maps]
+      summary: List favourite places
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FavouritePlacesResponse'
+    post:
+      tags: [Maps]
+      summary: Add favourite place
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FavouritePlaceRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FavouritePlaceEntry'
+
+  /v3/maps/places/favourites/{favouriteId}:
+    put:
+      tags: [Maps]
+      summary: Update favourite place
+      parameters:
+        - name: favouriteId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FavouritePlaceRequest'
+      responses:
+        '204':
+          description: Updated
+    delete:
+      tags: [Maps]
+      summary: Delete favourite place
+      parameters:
+        - name: favouriteId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Deleted
+
+  /v3/maps/places/{placeId}/travel-data:
+    get:
+      tags: [Maps]
+      summary: Travel time/distance to place from vehicle
+      parameters:
+        - name: placeId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: vin
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaceTravelData'
+
+  /v3/maps/offers:
+    get:
+      tags: [Partner Offers]
+      summary: Get partner offers near location
+      parameters:
+        - name: latitude
+          in: query
+          schema:
+            type: number
+        - name: longitude
+          in: query
+          schema:
+            type: number
+        - name: vin
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerOffersResponse'
+    post:
+      tags: [Partner Offers]
+      summary: Get partner offers (POST variant)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                location:
+                  $ref: '#/components/schemas/GeoCoordinate'
+                radiusInMeters:
+                  type: integer
+                vin:
+                  type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerOffersResponse'
+
+  /v3/maps/offers/{offerId}/redemption:
+    post:
+      tags: [Partner Offers]
+      summary: Redeem partner offer
+      parameters:
+        - name: offerId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                location:
+                  $ref: '#/components/schemas/GeoCoordinate'
+                vin:
+                  type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerOfferRedemption'
+
+  /v1/vehicle-automatization/{vin}/departure/timers:
+    get:
+      tags: [Vehicle Automation]
+      summary: Get departure timers
+      parameters:
+        - $ref: '#/components/parameters/vin'
+        - name: deviceDateTime
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DepartureInfo'
+    post:
+      tags: [Vehicle Automation]
+      summary: Update departure timer(s)
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DepartureTimersUpdate'
+      responses:
+        '204':
+          description: Updated
+
+  /v1/vehicle-automatization/{vin}/departure/timers/settings:
+    post:
+      tags: [Vehicle Automation]
+      summary: Set minimum SOC for departure
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                minimumBatteryStateOfChargeInPercent:
+                  type: integer
+      responses:
+        '204':
+          description: Updated
+
+  /v3/vehicle-maintenance/vehicles/{vin}:
+    get:
+      tags: [Maintenance]
+      summary: Get maintenance info
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaintenanceInfo'
+
+  /v3/vehicle-maintenance/vehicles/{vin}/service-booking:
+    post:
+      tags: [Maintenance]
+      summary: Request service booking
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type:
+                  type: string
+                  example: AUTO
+      responses:
+        '204':
+          description: Booking requested
+
+  /v1/trip-statistics/{vin}:
+    get:
+      tags: [Trip Statistics]
+      summary: Get trip statistics
+      parameters:
+        - $ref: '#/components/parameters/vin'
+        - name: offsetType
+          in: query
+          schema:
+            type: string
+            enum: [week, month, year]
+        - name: offset
+          in: query
+          schema:
+            type: integer
+        - name: timezone
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TripStatisticsInfo'
+
+  /v1/vehicle-information/{vin}/renders:
+    get:
+      tags: [Vehicle Information]
+      summary: Get vehicle render images
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VehicleRendersResponse'
+
+  /v1/vehicle-information/{vin}/software-version/update-status:
+    get:
+      tags: [Vehicle Information]
+      summary: Software update status
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SoftwareUpdateStatus'
+
+  /v1/vehicle-health-report/warning-lights/{vin}:
+    get:
+      tags: [Health]
+      summary: Vehicle health / warning lights
+      parameters:
+        - $ref: '#/components/parameters/vin'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VehicleHealthInfo'
+
+  /v2/loyalty-program/details:
+    get:
+      tags: [Loyalty]
+      summary: Loyalty program details
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoyaltyProgramDetails'
+
+  /v2/loyalty-program/members/{userId}:
+    get:
+      tags: [Loyalty]
+      summary: Loyalty member profile
+      parameters:
+        - $ref: '#/components/parameters/userId'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoyaltyProgramMember'
+
+  /v2/loyalty-program/members/{userId}/badges:
+    get:
+      tags: [Loyalty]
+      summary: List loyalty badges
+      parameters:
+        - $ref: '#/components/parameters/userId'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoyaltyBadgesResponse'
+
+  /v2/loyalty-program/members/{userId}/badges/{badgeId}:
+    get:
+      tags: [Loyalty]
+      summary: Badge detail
+      parameters:
+        - $ref: '#/components/parameters/userId'
+        - name: badgeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoyaltyBadgeDetail'
+
+  /v2/loyalty-program/members/{userId}/transactions:
+    get:
+      tags: [Loyalty]
+      summary: Points transactions
+      parameters:
+        - $ref: '#/components/parameters/userId'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoyaltyTransactionsResponse'
+
+  /v2/loyalty-program/members/{userId}/daily-check-in:
+    post:
+      tags: [Loyalty]
+      summary: Daily check-in
+      parameters:
+        - $ref: '#/components/parameters/userId'
+      responses:
+        '204':
+          description: Checked in
+
+  /v2/loyalty-program/members/{userId}/rewards:
+    get:
+      tags: [Loyalty]
+      summary: Available rewards / vouchers
+      parameters:
+        - $ref: '#/components/parameters/userId'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoyaltyRewardsResponse'
+    post:
+      tags: [Loyalty]
+      summary: Redeem voucher
+      parameters:
+        - $ref: '#/components/parameters/userId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                voucherId:
+                  type: string
+      responses:
+        '204':
+          description: Redeemed
+
+  /v2/consents/third-party-offers:
+    get:
+      tags: [Consents]
+      summary: Third-party offers consent status
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThirdPartyOffersConsent'
+    patch:
+      tags: [Consents]
+      summary: Update third-party offers consent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                consented:
+                  type: boolean
+      responses:
+        '204':
+          description: Updated
+
+  /v1/notifications-subscriptions/{fcmToken}:
+    put:
+      tags: [Notifications]
+      summary: Register FCM push token
+      parameters:
+        - name: fcmToken
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                devicePlatform:
+                  type: string
+                  example: ANDROID
+                appVersion:
+                  type: string
+                language:
+                  type: string
+      responses:
+        '200':
+          description: Registered
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Access token from IDK OAuth / refresh-token flow
+
+  parameters:
+    vin:
+      name: vin
+      in: path
+      required: true
+      schema:
+        type: string
+        example: TMBXXXXXXXXXXXXXXX
+    userId:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+    connectivityGenerations:
+      name: connectivityGenerations
+      in: query
+      description: Repeat for MOD1, MOD2, MOD3, MOD4
+      schema:
+        type: array
+        items:
+          type: string
+          enum: [MOD1, MOD2, MOD3, MOD4]
+      style: form
+      explode: true
+
+  schemas:
+    IDKSession:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        idToken:
+          type: string
+
+    UserProfile:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+
+    UserPreferences:
+      type: object
+      properties:
+        unitId:
+          type: string
+        theme:
+          type: string
+        automaticWakeUp:
+          type: boolean
+
+    UserPreferencesUpdate:
+      type: object
+      properties:
+        unitId:
+          type: string
+        theme:
+          type: string
+        automaticWakeUp:
+          type: boolean
+
+    GarageResponse:
+      type: object
+      properties:
+        vehicles:
+          type: array
+          items:
+            $ref: '#/components/schemas/VehicleInfo'
+
+    VehicleInfo:
+      type: object
+      properties:
+        vin:
+          type: string
+        name:
+          type: string
+        state:
+          type: string
+        licensePlate:
+          type: string
+        specification:
+          type: object
+          properties:
+            model:
+              type: string
+            title:
+              type: string
+            modelYear:
+              type: string
+        capabilities:
+          type: object
+          properties:
+            capabilities:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  statuses:
+                    type: array
+                    items:
+                      type: string
+
+    VehicleStatus:
+      type: object
+      description: Doors, windows, lights, lock state, odometer, etc.
+      additionalProperties: true
+
+    DrivingRange:
+      type: object
+      additionalProperties: true
+
+    DrivingScore:
+      type: object
+      additionalProperties: true
+
+    ConnectionStatus:
+      type: object
+      properties:
+        inMotion:
+          type: boolean
+
+    ChargingInfo:
+      type: object
+      additionalProperties: true
+
+    ChargingProfilesResponse:
+      type: object
+      properties:
+        profiles:
+          type: array
+          items:
+            type: object
+
+    ChargingProfileUpdate:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        settings:
+          type: object
+        preferredChargingTimes:
+          type: array
+          items:
+            type: object
+        timers:
+          type: array
+          items:
+            type: object
+
+    ChargingHistory:
+      type: object
+      additionalProperties: true
+
+    AirConditioningInfo:
+      type: object
+      additionalProperties: true
+
+    AuxiliaryHeatingInfo:
+      type: object
+      additionalProperties: true
+
+    ActiveVentilationInfo:
+      type: object
+      additionalProperties: true
+
+    Temperature:
+      type: object
+      properties:
+        temperatureValue:
+          type: number
+        unitInCar:
+          type: string
+          example: CELSIUS
+
+    StartAirConditioningRequest:
+      type: object
+      properties:
+        heaterSource:
+          type: string
+          example: ELECTRIC
+        targetTemperature:
+          $ref: '#/components/schemas/Temperature'
+
+    ACTimer:
+      type: object
+      properties:
+        id:
+          type: integer
+        enabled:
+          type: boolean
+        time:
+          type: string
+        type:
+          type: string
+        selectedDays:
+          type: array
+          items:
+            type: string
+
+    SpinRequest:
+      type: object
+      required: [currentSpin]
+      properties:
+        currentSpin:
+          type: string
+
+    SpinVerification:
+      type: object
+      additionalProperties: true
+
+    HonkAndFlashRequest:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [HONK_AND_FLASH, FLASH]
+        vehiclePosition:
+          $ref: '#/components/schemas/GeoCoordinate'
+
+    GeoCoordinate:
+      type: object
+      properties:
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+
+    ParkingPosition:
+      type: object
+      additionalProperties: true
+
+    PositionsResponse:
+      type: object
+      additionalProperties: true
+
+    PlacePredictionsResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              address:
+                type: string
+
+    MapPlaceDetailResponse:
+      type: object
+      additionalProperties: true
+
+    MapPlacesLookupResponse:
+      type: object
+      additionalProperties: true
+
+    NearbyPlacesRequest:
+      type: object
+      required: [placeTypes, location, radiusInMeters]
+      properties:
+        placeTypes:
+          type: array
+          items:
+            type: string
+            enum: [CHARGING_STATION, GAS_STATION]
+        location:
+          $ref: '#/components/schemas/GeoCoordinate'
+        radiusInMeters:
+          type: integer
+        requirements:
+          type: object
+          additionalProperties: true
+
+    NearbyPlacesResponse:
+      type: object
+      properties:
+        nearbyPlaces:
+          type: array
+          items:
+            type: object
+
+    PlanRouteRequest:
+      type: object
+      properties:
+        vin:
+          type: string
+        destinations:
+          type: array
+          items:
+            type: object
+
+    PlannedRouteResponse:
+      type: object
+      properties:
+        route:
+          type: object
+          properties:
+            id:
+              type: string
+            durationInSeconds:
+              type: integer
+            distanceInMeters:
+              type: integer
+
+    FavouritePlacesResponse:
+      type: object
+      properties:
+        places:
+          type: array
+          items:
+            $ref: '#/components/schemas/FavouritePlaceEntry'
+
+    FavouritePlaceRequest:
+      type: object
+      properties:
+        type:
+          type: string
+          example: LOCATION
+        placeDetail:
+          type: object
+
+    FavouritePlaceEntry:
+      type: object
+      additionalProperties: true
+
+    PlaceTravelData:
+      type: object
+      additionalProperties: true
+
+    PartnerOffersResponse:
+      type: object
+      properties:
+        offers:
+          type: array
+          items:
+            type: object
+
+    PartnerOfferRedemption:
+      type: object
+      additionalProperties: true
+
+    DepartureInfo:
+      type: object
+      additionalProperties: true
+
+    DepartureTimersUpdate:
+      type: object
+      properties:
+        deviceDateTime:
+          type: string
+        timers:
+          type: array
+          items:
+            type: object
+
+    MaintenanceInfo:
+      type: object
+      additionalProperties: true
+
+    TripStatisticsInfo:
+      type: object
+      additionalProperties: true
+
+    VehicleRendersResponse:
+      type: object
+      additionalProperties: true
+
+    SoftwareUpdateStatus:
+      type: object
+      additionalProperties: true
+
+    VehicleHealthInfo:
+      type: object
+      additionalProperties: true
+
+    GuestUsersResponse:
+      type: object
+      properties:
+        guests:
+          type: array
+          items:
+            type: object
+
+    LoyaltyProgramDetails:
+      type: object
+      additionalProperties: true
+
+    LoyaltyProgramMember:
+      type: object
+      additionalProperties: true
+
+    LoyaltyBadgesResponse:
+      type: object
+      additionalProperties: true
+
+    LoyaltyBadgeDetail:
+      type: object
+      additionalProperties: true
+
+    LoyaltyTransactionsResponse:
+      type: object
+      additionalProperties: true
+
+    LoyaltyRewardsResponse:
+      type: object
+      additionalProperties: true
+
+    ThirdPartyOffersConsent:
+      type: object
+      properties:
+        consented:
+          type: boolean
+
+  responses:
+    Unauthorized:
+      description: Missing or expired Bearer token
+    Forbidden:
+      description: Insufficient permissions or invalid S-PIN
+    NotFound:
+      description: Resource not found
