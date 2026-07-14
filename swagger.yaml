@@ -7,8 +7,21 @@ info:
 
     **Base path:** all endpoints below are relative to `https://mysmob.api.connect.skoda-auto.cz/api`
 
-    **Authentication:** OAuth2 / IDK login via VW Identity (`identity.vwgroup.io`), then Bearer token on API calls.
-    Refresh via `POST /v1/authentication/refresh-token`.
+    **Authentication (email + password login):**
+
+    Login is **not** a single REST call. The app uses OAuth2 + PKCE against VW Identity, then exchanges the auth code on the MyŠkoda API:
+
+    1. `GET /oidc/v1/authorize` — start OAuth (PKCE code_challenge, cookies)
+    2. Parse `window._IDK` from HTML → `csrf`, `hmac`, `relayState`
+    3. `POST .../login/identifier` — submit **email** (form-urlencoded)
+    4. `POST .../login/authenticate` — submit **email + password** (same CSRF fields; may redirect)
+    5. Follow redirects until `Location: myskoda://redirect/login/?code=...`
+    6. `POST /v1/authentication/exchange-authorization-code` — exchange `code` + PKCE `verifier` → JWT
+    7. Use `accessToken` as `Authorization: Bearer` on all `/api/*` calls
+    8. Refresh with `POST /v1/authentication/refresh-token` when expired
+
+    **Client ID:** `7f045eee-7003-4379-9968-9355ed2adb06@apps_vw-dilab_com`  
+    **Redirect URI:** `myskoda://redirect/login/`
 
     **Vehicle commands:** many write operations also flow through **MQTT** (honk, lock, charging updates, etc.)
     in parallel to or instead of REST — see `MySkodaConstants.mqttTopics`.
@@ -22,10 +35,15 @@ servers:
   - url: https://mysmob.api.connect.skoda-auto.cz/api
     description: MyŠkoda Connect API (production)
   - url: https://identity.vwgroup.io
-    description: VW Identity / OAuth (login only)
+    description: VW Identity — OAuth authorize
+  - url: https://identity.vwgroup.io/signin-service/v1/7f045eee-7003-4379-9968-9355ed2adb06@apps_vw-dilab_com
+    description: VW Identity — email/password sign-in forms
 
 tags:
   - name: Authentication
+    description: Token exchange & refresh (MyŠkoda API)
+  - name: Login
+    description: Email/password OAuth flow (VW Identity HTML forms)
   - name: Users
   - name: Garage
   - name: Vehicle Status
@@ -50,6 +68,183 @@ security:
   - bearerAuth: []
 
 paths:
+  # ---------------------------------------------------------------------------
+  # Login flow (VW Identity) — see info.description for full sequence
+  # ---------------------------------------------------------------------------
+  /oidc/v1/authorize:
+    get:
+      tags: [Login]
+      summary: "Step 1 — Start OAuth login (load sign-in page)"
+      description: |
+        Browser-like GET with cookie jar. Returns HTML containing `window._IDK` with CSRF tokens.
+        Generate PKCE `code_verifier` (64 chars) and `code_challenge` = BASE64URL(SHA256(verifier)).
+        Follow redirects manually (do not auto-follow) until HTML login page is returned.
+      servers:
+        - url: https://identity.vwgroup.io
+      security: []
+      parameters:
+        - name: client_id
+          in: query
+          required: true
+          schema:
+            type: string
+            default: 7f045eee-7003-4379-9968-9355ed2adb06@apps_vw-dilab_com
+        - name: redirect_uri
+          in: query
+          required: true
+          schema:
+            type: string
+            default: myskoda://redirect/login/
+        - name: response_type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [code]
+        - name: scope
+          in: query
+          required: true
+          schema:
+            type: string
+            default: address badge birthdate cars driversLicense dealers email mileage mbb nationalIdentifier openid phone profession profile vin
+        - name: code_challenge
+          in: query
+          required: true
+          schema:
+            type: string
+            description: BASE64URL(SHA256(code_verifier)) without padding
+        - name: code_challenge_method
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [s256]
+        - name: nonce
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: prompt
+          in: query
+          schema:
+            type: string
+            default: login
+      responses:
+        '200':
+          description: Login HTML page (`window._IDK` CSRF fields)
+          content:
+            text/html:
+              schema:
+                type: string
+        '302':
+          description: Redirect to sign-in HTML — read Location and GET manually
+
+  /login/identifier:
+    post:
+      tags: [Login]
+      summary: "Step 2 — Submit email address"
+      description: |
+        POST `application/x-www-form-urlencoded` with CSRF fields parsed from Step 1 HTML.
+        On success returns password page HTML (200) or 302 to `/login/authenticate`.
+        Requires browser-like headers (User-Agent, Origin, Referer, cookies).
+      servers:
+        - url: https://identity.vwgroup.io/signin-service/v1/7f045eee-7003-4379-9968-9355ed2adb06
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/loginBrowserHeaders'
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/LoginIdentifierForm'
+            example:
+              relayState: "..."
+              email: user@example.com
+              hmac: "..."
+              _csrf: "..."
+      responses:
+        '200':
+          description: Password step HTML (parse new CSRF from `window._IDK`)
+          content:
+            text/html:
+              schema:
+                type: string
+        '302':
+          description: Redirect to password/authenticate page — follow Location
+        '500':
+          description: Unknown email or sign-in error (check HTML/redirect for error code)
+
+  /login/authenticate:
+    post:
+      tags: [Login]
+      summary: "Step 3 — Submit email + password"
+      description: |
+        POST to this path **or** the URL returned after Step 2 (often same as `/login/identifier`).
+        Follow redirect chain manually until `Location` starts with `myskoda://redirect/login/?code=`.
+        May pass through marketing consent or terms-and-conditions redirects.
+      servers:
+        - url: https://identity.vwgroup.io/signin-service/v1/7f045eee-7003-4379-9968-9355ed2adb06
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/LoginPasswordForm'
+            example:
+              relayState: "..."
+              email: user@example.com
+              password: secret
+              hmac: "..."
+              _csrf: "..."
+      responses:
+        '302':
+          description: |
+            Redirect chain ending with:
+            `myskoda://redirect/login/?code={authorization_code}`
+          headers:
+            Location:
+              schema:
+                type: string
+                example: myskoda://redirect/login/?code=abc123
+        '500':
+          description: Wrong password, throttled, or account not linked to MyŠkoda
+
+  /v1/authentication/exchange-authorization-code:
+    post:
+      tags: [Authentication]
+      summary: "Step 4 — Exchange OAuth code for JWT session"
+      description: |
+        Call after extracting `code` from the `myskoda://` redirect.
+        Use the same PKCE `verifier` generated in Step 1.
+      security: []
+      parameters:
+        - name: tokenType
+          in: query
+          schema:
+            type: string
+            default: CONNECT
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExchangeAuthorizationCodeRequest'
+            example:
+              code: "authorization_code_from_redirect"
+              redirectUri: myskoda://redirect/login/
+              verifier: "pkce_code_verifier_from_step_1"
+      responses:
+        '200':
+          description: Session tokens — use accessToken as Bearer on API calls
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IDKSession'
+        '400':
+          description: Invalid or expired authorization code
+
   /v1/authentication/refresh-token:
     post:
       tags: [Authentication]
@@ -1432,8 +1627,78 @@ components:
           enum: [MOD1, MOD2, MOD3, MOD4]
       style: form
       explode: true
+    loginBrowserHeaders:
+      name: User-Agent
+      in: header
+      description: |
+        Required browser-like headers for Identity login:
+        `User-Agent`, `Accept`, `Accept-Language`, `Origin: https://identity.vwgroup.io`, `Referer`, cookies from prior steps.
+      required: false
+      schema:
+        type: string
+        example: Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15
 
   schemas:
+    CSRFState:
+      type: object
+      description: Parsed from login HTML `window._IDK` script block
+      required: [csrf, hmac, relayState]
+      properties:
+        csrf:
+          type: string
+          description: Value of csrf_token from HTML
+        hmac:
+          type: string
+        relayState:
+          type: string
+
+    LoginIdentifierForm:
+      type: object
+      required: [relayState, email, hmac, _csrf]
+      properties:
+        relayState:
+          type: string
+        email:
+          type: string
+          format: email
+          description: MyŠkoda account email
+        hmac:
+          type: string
+        _csrf:
+          type: string
+
+    LoginPasswordForm:
+      type: object
+      required: [relayState, email, password, hmac, _csrf]
+      properties:
+        relayState:
+          type: string
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+          writeOnly: true
+        hmac:
+          type: string
+        _csrf:
+          type: string
+
+    ExchangeAuthorizationCodeRequest:
+      type: object
+      required: [code, redirectUri, verifier]
+      properties:
+        code:
+          type: string
+          description: OAuth authorization code from myskoda:// redirect
+        redirectUri:
+          type: string
+          default: myskoda://redirect/login/
+        verifier:
+          type: string
+          description: PKCE code_verifier (plain, not hashed)
+
     IDKSession:
       type: object
       properties:
